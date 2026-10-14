@@ -1,0 +1,551 @@
+---
+title: 'Response Surface Modeling and Bayesian Optimization for Pollutant Removal'
+author: "MENG HUIDAN"
+date: "2025-01-30"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Overall objective
+To identify the key operating factors associated with pollutant removal efficiency and determine the combination of factor settings that maximizes the predicted response.
+
+### Specific objectives
+1. To evaluate the effects of key operating factors, including temperature, pH, initial pollutant concentration, nanomaterial dosage, and contact time, on removal efficiency.
+2. To characterize interactions among the factors and assess their effects on removal efficiency.
+3. To optimize the experimental conditions and identify the combination of factor settings that maximizes predicted removal efficiency within the specified experimental bounds.
+
+### Data analysis and modeling
+
+#### Model fitting
+1. Fit a second-order polynomial model using response surface methodology (RSM) and assess the linear, quadratic, and interaction effects of the factors.
+2. Use statistical tests to assess the significance of model terms, while considering model hierarchy and scientific relevance when selecting terms.
+
+#### Response surface analysis
+Visualize the relationships between the factors and the response using contour plots and three-dimensional response-surface plots.
+For example, examine how pH and temperature jointly affect removal efficiency.
+
+#### Model evaluation
+Assess the model’s in-sample goodness of fit using the mean squared error (MSE). Independent experimental runs would be required to evaluate out-of-sample predictive performance.
+
+### Optimization framework
+**Optimization of experimental conditions.**
+Use the fitted response-surface model to identify high-response operating conditions within the specified factor bounds. Because the fitted RSM model is explicit and inexpensive to evaluate, bounded deterministic optimization methods are also appropriate; Bayesian optimization is used here as a bounded numerical search strategy rather than as a substitute for model adequacy.
+```{r , include=FALSE, echo = FALSE}
+# Load the required R packages
+library(tidyverse)
+library(rsm)
+library(BayesianTools)
+library(ggplot2)
+library(dplyr)
+library(rBayesianOptimization)
+# library(bayesopt)
+```
+
+### Methodological background
+Response surface methodology (RSM) was pioneered in the early 1950s by George E. P. Box and K. B. Wilson, initially in the context of process optimization.
+In their seminal 1951 paper, “On the Experimental Attainment of Optimum Conditions,” they established a systematic experimental framework for exploring response surfaces and approaching optimum operating conditions.
+Second-order polynomial models are commonly used in RSM to approximate the relationship between experimental factors and a response.
+A central idea behind RSM is to use designed experiments (for example, a central composite design) to characterize the relationship between experimental factors and a response, and then use the fitted model to optimize system performance.
+
+#### Early applications
+**Chemical and process engineering.**
+Box and Wilson’s work focused primarily on optimizing chemical reactions—for example, identifying temperature, pressure, and catalyst-concentration settings that maximize product yield or minimize by-product formation.
+RSM remains useful in these fields, although its applications and integration with other computational methods continue to evolve.
+
+#### Advantages and contemporary relevance of RSM
+**a. Model parsimony and interpretability.**
+Although machine-learning methods, including neural networks and deep learning, are increasingly used, RSM provides an explicit mathematical model that can make relationships between factors and responses easier to interpret.
+In fields where interpretability is important, such as pharmaceutical research and agricultural science, RSM remains a useful modeling approach.
+**b. Suitability for limited experimental data.**
+When only a limited number of experimental runs are available, flexible machine-learning models may overfit; a quadratic RSM model can therefore be a practical option for small-sample optimization, provided its assumptions are reasonable.
+**c. Integration with modern computational workflows.**
+Tools such as Python, R, and MATLAB have made RSM modeling, visualization, and optimization workflows more accessible and efficient.
+
+### Combining RSM with Bayesian optimization
+
+#### Objective
+Use RSM to characterize the response surface and identify promising regions of the factor space. Bayesian optimization is then used here as a bounded numerical search strategy to identify high-response factor combinations predicted by the fitted RSM model.
+In its conventional use, Bayesian optimization is particularly valuable for expensive black-box objectives. In the present analysis, however, the objective is the fitted RSM prediction function, which is explicit and inexpensive to evaluate; therefore, deterministic bounded optimization would also be a reasonable alternative.
+
+#### Key features
+**RSM provides an initial response model.**
+A quadratic model is fitted to data collected under an RSM design to characterize the relationship between the response and the experimental factors.
+The fitted model can help identify promising regions with high predicted responses and focus the subsequent search.
+**Bayesian optimization performs a bounded numerical search.**
+Within this report, Bayesian optimization searches the specified factor bounds using the fitted RSM predictions as the objective values. More generally, Bayesian optimization fits a surrogate model, often a Gaussian process, and uses an acquisition function to select candidate points for evaluation.
+**Useful when evaluations are expensive.**
+Bayesian optimization is particularly useful when evaluating the objective function is costly, as in physical experiments or simulation studies.
+It aims to find a good solution with relatively few costly evaluations; it does not guarantee that the global optimum will be found.
+
+#### Advantages
+It can reduce the number of expensive experimental runs needed to identify a high-performing solution.
+It can handle black-box objectives that lack a convenient explicit expression or derivative.
+
+#### Limitations
+Its computational and data requirements can increase with dimensionality, so it is often most effective for low- to moderate-dimensional problems; there is no universal cutoff on the number of variables.
+Its performance depends on modeling assumptions and choices, including the surrogate model and acquisition function; some approaches also rely on assumptions such as smoothness of the objective function.
+
+#### Suitable applications
+Problems in which objective-function evaluations are expensive, for example, when experimental costs are high.
+Situations in which an efficient search for a high-performing solution is needed.
+Systems with a relatively small number of factors and clearly defined search bounds.
+
+#### Example
+For catalyst optimization, RSM could first be used to model the effects of reaction conditions such as temperature and pressure; Bayesian optimization could then search for settings that maximize catalytic performance.
+```{r}
+# Load the data
+data <- read.csv("data+collection.csv")
+
+# Inspect the structure of the data
+str(data)
+summary(data)
+```
+### Response-surface analysis
+```{r, echo=FALSE}
+# Fit the response-surface model
+rsm_model <- rsm(removal_efficiency ~ SO(synthesis_time, removal_time, amount_of_nanomaterial,
+                                         initial_dye_concentration, temperature, pH), data = data)
+
+# Display the model summary
+summary(rsm_model)
+
+# Test the model terms using ANOVA
+anova(rsm_model)
+
+```
+### **Interpreting the model output step by step**
+
+#### **1. Model specification (the “Call” section)**
+```
+Call:
+rsm(formula = removal_efficiency ~ SO(synthesis_time, removal_time, 
+    amount_of_nanomaterial, initial_dye_concentration, temperature, 
+    pH), data = data)
+```
+
+- **Interpretation**:
+  - This is the model-fitting call. It specifies a response-surface model with `removal_efficiency` as the response and the following variables as predictors:
+    - `synthesis_time`
+    - `removal_time` (contact time)
+    - `amount_of_nanomaterial` (nanomaterial dosage)
+    - `initial_dye_concentration`
+    - `temperature`
+    - `pH`
+  - The model is a second-order response-surface model comprising first-order (linear) terms, two-factor interactions, and pure quadratic terms.
+
+
+#### **2. Estimated coefficients**
+```
+                                          Estimate  Std. Error  t value  Pr(>|t|)    
+(Intercept)                            -4.9832e-01  1.8096e-01  -2.7537 0.0061213 ** 
+...
+pH^2                                    2.6277e-02  3.4383e-03   7.6425 1.216e-13 ***
+```
+
+- **How to interpret the columns**
+  - **`Estimate`**: the estimated regression coefficient for a model term. Its interpretation depends on the model specification and the scales of the predictors.
+    - In a second-order model containing quadratic and interaction terms, a first-order coefficient should not be interpreted as a constant slope over the entire experimental region. The marginal effect of a factor depends on its own level and, where interactions are present, on the levels of the interacting factors.
+    - An interaction term such as `synthesis_time:removal_time` represents how the effect of one factor varies with the level of the other factor.
+  - **`Std. Error` (standard error)**: a measure of the sampling uncertainty of the coefficient estimate.
+    - A smaller standard error indicates greater precision, all else being equal.
+  - **`t value` (t-statistic)**: the coefficient estimate divided by its standard error; it is used to test the null hypothesis that the coefficient is zero.
+  - **`Pr(>|t|)` (p-value)**: the p-value for the coefficient test. A smaller p-value indicates stronger evidence against the null hypothesis of a zero coefficient; it does not measure the size or practical importance of the effect.
+    - \( p < 0.001 \) (`***`): statistically significant at the 0.001 level
+    - \( p < 0.01 \) (`**`): statistically significant at the 0.01 level
+    - \( p < 0.05 \) (`*`): statistically significant at the 0.05 level
+    - \( p \geq 0.05 \) (no marker): not statistically significant at the 0.05 level
+
+- **Interpretation of selected statistically significant terms**
+  1. **Statistically significant first-order terms**:
+     - `removal_time` (\( p < 2.2 \times 10^{-16} \)) is statistically significant, with an estimated coefficient of \( 0.11005 \).
+     - `amount_of_nanomaterial` (\( p = 9.346 \times 10^{-7} \)) and `temperature` (\( p = 0.003 \)) are also statistically significant.
+     - The estimated linear coefficient for `pH` is negative (\( -0.21899 \)) and statistically significant (\( p < 4.526 \times 10^{-10} \)). The statistically significant quadratic term for pH provides evidence of curvature in the fitted response. Whether the relationship is non-monotonic within the experimental domain depends on whether the turning point lies within the observed factor range.
+  2. **Statistically significant interaction terms**:
+     - `synthesis_time:removal_time` (\( p = 0.0006296 \)) indicates a statistically significant interaction between `synthesis_time` and `removal_time`.
+     - `removal_time:pH` (\( p = 0.0020029 \)) indicates a statistically significant interaction between `removal_time` and pH.
+  3. **Statistically significant quadratic terms**:
+     - `removal_time^2` (\( p < 2.2 \times 10^{-16} \)) is statistically significant, with an estimated coefficient of \( -0.0048071 \), providing evidence of curvature in the relationship with removal efficiency.
+     - `pH^2` (\( p = 1.216 \times 10^{-13} \)) is statistically significant, indicating curvature in the relationship between pH and removal efficiency. This alone does not establish that an optimum lies within the experimental range.
+
+- **Terms that are not statistically significant**:
+  - Neither the linear nor the quadratic term for `initial_dye_concentration` is statistically significant (\( p > 0.2 \)).
+  - The quadratic term `synthesis_time^2` and some interaction terms, such as `removal_time:temperature`, are not statistically significant.
+
+
+#### **3. Model fit**
+```
+Multiple R-squared:  0.8528,	Adjusted R-squared:  0.8475 
+F-statistic: 159.5 on 17 and 468 DF,  p-value: < 2.2e-16
+```
+
+- **`Multiple R-squared`**:
+  - \( R^2 = 0.8528 \): the model explains 85.28% of the observed variation in the response in the data used to fit it.
+
+- **`Adjusted R-squared`**:
+  - The adjusted \( R^2 = 0.8475 \) is slightly lower than \( R^2 \), as expected after accounting for the number of model terms. These statistics describe in-sample fit and do not, by themselves, establish out-of-sample predictive performance.
+
+- **F-statistic and p-value**:
+  - The overall F-test gives \( p < 2.2 \times 10^{-16} \), providing evidence that the model explains a statistically significant amount of variation relative to an intercept-only model.
+
+
+#### **4. Analysis of variance (ANOVA) table**
+```
+Analysis of Variance Table
+
+Response: removal_efficiency
+...
+```
+
+- **Interpretation**:
+  - The table tests the model contributions associated with the first-order (`FO`), two-factor interaction (`TWI`), and pure-quadratic (`PQ`) terms.
+  - **FO (first order)**: the first-order terms are jointly statistically significant (\( p < 2.2 \times 10^{-16} \)).
+  - **TWI (two-factor interactions)**: the interaction terms are jointly statistically significant (\( p = 0.007265 \)).
+  - **PQ (pure quadratic)**: the quadratic terms are jointly statistically significant (\( p < 2.2 \times 10^{-16} \)).
+
+
+#### **5. Stationary-point analysis**
+```
+Stationary point of response surface:
+...
+```
+
+- **Interpretation**:
+  - A stationary point is a point at which the gradient of the fitted response surface is zero. Depending on the surface curvature, it may be a local maximum, a local minimum, or a saddle point.
+  - The reported factor settings at the stationary point are:
+    - `synthesis_time = -2.136565` (this value may lie outside the experimental range and should be interpreted cautiously).
+    - `removal_time = 13.368914`.
+    - `amount_of_nanomaterial = 64.227485`.
+    - Values for the remaining factors are also reported in the model output.
+
+
+#### **6. Eigenvalues and response-surface geometry**
+```
+Eigenanalysis:
+eigen() decomposition
+...
+```
+
+- **Interpretation**:
+  - The eigenvalues of the quadratic coefficient matrix (the \(\mathbf{B}\) matrix in the second-order response-surface representation) help characterize the local curvature of the response surface.
+    - Positive eigenvalues: locally convex curvature, consistent with a minimum if all eigenvalues are positive.
+    - Negative eigenvalues: locally concave curvature, consistent with a maximum if all eigenvalues are negative.
+  - Because the eigenvalues have mixed signs, the quadratic coefficient matrix is indefinite and the stationary point is a saddle point rather than a local maximum or minimum.
+
+
+### **Overall model assessment**
+
+1. **Model fit**
+   - The values of \( R^2 = 0.8528 \) and adjusted \( R^2 = 0.8475 \) indicate a strong in-sample fit.
+   - The overall F-test is statistically significant (\( p < 2.2 \times 10^{-16} \)).
+
+2. **Statistical significance of model terms**
+   - The first-order terms for `removal_time`, `amount_of_nanomaterial`, and `pH` are statistically significant in this fitted model.
+   - The interaction term `synthesis_time:removal_time` and quadratic terms such as `pH^2` are also statistically significant.
+   - Terms such as those involving `initial_dye_concentration` could be considered for removal, but any simplification should preserve model hierarchy and be guided by the experimental design and scientific rationale.
+
+3. **Response-surface analysis**
+   - Some stationary-point coordinates may lie outside the experimental design range (for example, `synthesis_time = -2.136565`), so they should not be interpreted as feasible operating conditions without checking the factor scales and experimental bounds.
+   - The surface curvature indicated by the eigenvalues is consistent with a saddle point; the existence and location of any feasible optimum should be assessed within the experimental region.
+
+4. **Recommendations for further analysis**
+   - Consider refitting a reduced model after reviewing terms that are not statistically significant, while respecting model hierarchy and subject-matter knowledge.
+   - If the stationary point lies outside the experimental region, consider constrained optimization over the feasible range or, where scientifically justified, conduct additional experiments to expand the design space. Bayesian optimization may also be used as a complementary search strategy.
+
+### Model reduction and refinement
+```{r}
+# Fit a reduced response-surface model after reviewing terms that are not statistically significant
+rsm_model_optimized <- rsm(removal_efficiency ~ 
+                             FO(synthesis_time, removal_time, amount_of_nanomaterial, temperature, pH) +
+                             TWI(formula = ~ synthesis_time:removal_time +
+                                             synthesis_time:amount_of_nanomaterial +
+                                             synthesis_time:pH +
+                                             removal_time:amount_of_nanomaterial +
+                                             removal_time:temperature +
+                                             removal_time:pH +
+                                             amount_of_nanomaterial:temperature +
+                                             amount_of_nanomaterial:pH +
+                                             temperature:pH) +
+                             PQ(removal_time, amount_of_nanomaterial, temperature, pH),
+                           data = data)
+
+# Display the summary of the reduced model
+summary(rsm_model_optimized)
+
+# Test the model terms using ANOVA
+anova(rsm_model_optimized)
+
+# Analyze the stationary point of the reduced model
+canonical(rsm_model_optimized)
+
+```
+#### Brief interpretation of the results
+
+Review the coefficient table and ANOVA output above to identify terms that are not statistically significant. Any further term removal should preserve model hierarchy and be guided by scientific relevance.
+
+The stationary point returned by the reduced model should be checked against the experimentally feasible factor ranges. If any coordinate lies outside the feasible domain, use constrained optimization to identify feasible high-response operating conditions. Imposing bounds on the numerical optimization does not change the location of the unconstrained stationary point itself.
+
+#### Further model refinement
+
+```{r,echo=FALSE}
+# Refit the response-surface model after excluding the specified interaction term
+rsm_model_final <- rsm(removal_efficiency ~ 
+                         FO(synthesis_time, removal_time, amount_of_nanomaterial, temperature, pH) +
+                         TWI(formula = ~ synthesis_time:removal_time +
+                                         synthesis_time:amount_of_nanomaterial +
+                                         synthesis_time:pH +
+                                         removal_time:amount_of_nanomaterial +
+                                         removal_time:pH +
+                                         amount_of_nanomaterial:temperature +
+                                         amount_of_nanomaterial:pH +
+                                         temperature:pH) +
+                         PQ(removal_time, amount_of_nanomaterial, temperature, pH),
+                       data = data)
+
+# Display the summary of the reduced model
+summary(rsm_model_final)
+
+# Test the model terms using ANOVA
+anova(rsm_model_final)
+
+# Compute the stationary point of the refitted model
+canonical_analysis <- canonical(rsm_model_final)
+
+print(canonical_analysis)
+
+```
+
+
+### Visualizing factor interactions and response-surface diagnostics
+```{r, echo=FALSE}
+
+# 1. Contour plot showing the joint effect of removal_time and amount_of_nanomaterial
+contour(rsm_model_final, ~ removal_time + amount_of_nanomaterial, image = TRUE)
+
+# 2. Three-dimensional response-surface plot showing the effects of pH and temperature on removal efficiency
+persp(rsm_model_final, ~ pH + temperature, theta = 30, phi = 20)
+
+# 3. Residual diagnostics, including an assessment of residual normality
+par(mfrow = c(2, 2))  # Set up a multi-panel layout
+plot(rsm_model_final)
+par(mfrow = c(1, 1))  # Restore the default graphical layout
+
+
+```
+```{r}
+# install.packages("plotly")
+library(plotly)
+
+# Construct the prediction grid
+grid <- expand.grid(
+  pH = seq(min(data$pH), max(data$pH), length = 50),
+  temperature = seq(min(data$temperature), max(data$temperature), length = 50)
+)
+grid$removal_time <- mean(data$removal_time)
+grid$amount_of_nanomaterial <- mean(data$amount_of_nanomaterial)
+grid$initial_dye_concentration <- mean(data$initial_dye_concentration)
+grid$synthesis_time <- mean(data$synthesis_time)
+
+# Predict the response values
+grid$pred <- predict(rsm_model_final, newdata = grid)
+z_matrix <- matrix(grid$pred, nrow = 50, byrow = TRUE)
+
+# Generate the plot using plotly
+plot_ly(
+  x = unique(grid$pH),
+  y = unique(grid$temperature),
+  z = ~z_matrix,
+  type = "surface",
+  contours = list(
+    z = list(show = TRUE, usecolormap = TRUE, highlightcolor = "#ff0000", project = list(z = TRUE))
+  ),
+  colorscale = "Jet"
+) %>%
+  layout(
+    title = "3D Response Surface and Contour Projection of Removal Efficiency as a Function of pH and Temperature",
+    scene = list(
+      xaxis = list(title = "pH"),
+      yaxis = list(title = "Temperature"),
+      zaxis = list(title = "Removal efficiency")
+    )
+  )
+
+
+
+```
+
+```{r}
+# Set up a 2 × 2 panel layout
+par(mfrow = c(2, 2), mar = c(5, 5, 3, 2))  # Adjust the margins to improve appearance
+
+# Define colors for the plotted data and fitted reference line
+col_train <- "#1f77b4"  # Blue
+col_fit <- "#ff7f0e"    # Orange
+
+# Plot 1: Standardized residuals versus fitted values
+plot(rsm_model_final$fitted.values,
+     rstandard(rsm_model_final),
+     col = col_train,
+     pch = 19,
+     cex = 0.7,
+     main = "Standardized Residuals vs. Fitted Values",
+     xlab = "Fitted values",
+     ylab = "Standardized residuals")
+abline(h = 0, col = "gray40", lty = 2)
+
+# Plot 2: Normal Q–Q plot
+qqnorm(rstandard(rsm_model_final), col = col_train, pch = 19,
+       main = "Normal Q–Q Plot")
+qqline(rstandard(rsm_model_final), col = col_fit, lwd = 2)
+
+# Plot 3: Residuals versus fitted values
+plot(predict(rsm_model_final),
+     rsm_model_final$residuals,
+     col = col_train,
+     pch = 19,
+     cex = 0.7,
+     main = "Residuals vs. Fitted Values",
+     xlab = "Fitted values",
+     ylab = "Residuals")
+abline(h = 0, col = "gray40", lty = 2)
+
+# Plot 4: Scale–location plot for assessing homoscedasticity
+sqrt_std <- sqrt(abs(rstandard(rsm_model_final)))
+plot(rsm_model_final$fitted.values,
+     sqrt_std,
+     col = col_train,
+     pch = 19,
+     cex = 0.7,
+     main = "Scale–Location Plot for Assessing Homoscedasticity",
+     xlab = "Fitted values",
+     ylab = expression(sqrt("|Standardized residuals|")))
+abline(h = median(sqrt_std), col = col_fit, lty = 2)
+
+# Restore the default graphical layout
+par(mfrow = c(1, 1))
+
+
+```
+
+
+### Model evaluation
+```{r,echo=FALSE}
+# Calculate fitted values for the observations used to fit the model
+predicted_values <- predict(rsm_model_final, newdata = data)
+
+# Calculate the mean squared error (MSE)
+actual_values <- data$removal_efficiency
+mse <- mean((actual_values - predicted_values)^2)
+
+# Print the in-sample MSE
+cat("In-sample Mean Squared Error (MSE):", mse, "\n")
+
+```
+### **Interpreting the output**
+
+1. **Definition of mean squared error (MSE)**
+   - Mean squared error (MSE) quantifies the average squared difference between predicted and observed response values.
+   - It is calculated as:
+     \[
+     \text{MSE} = \frac{1}{n} \sum_{i=1}^{n} (\hat{y}_i - y_i)^2
+     \]
+     where:
+     - \( \hat{y}_i \) is the predicted value from the model,
+     - \( y_i \) is the observed value, and
+     - \( n \) is the number of observations used in the calculation.
+
+   - A lower MSE indicates smaller squared prediction errors for the observations being evaluated. When calculated on the training data, however, MSE measures in-sample fit rather than out-of-sample predictive performance.
+
+
+2. **Interpreting the reported MSE**
+   - The MSE reported above should be interpreted relative to the scale and variability of the response. Because the code calculates MSE on the same data used to fit the model, it reflects in-sample error and should not be described as test-set performance.
+
+### Bayesian optimization
+Because the unconstrained stationary point does not provide a feasible maximum within the specified operating region, Bayesian optimization is used here as a bounded numerical search strategy to identify high-response factor combinations predicted by the fitted RSM model. These settings are model-based candidates rather than experimentally validated global optima.
+
+**Simultaneous multi-factor optimization.** The presence of statistically significant interaction terms (for example, `removal_time:pH`) indicates that the effect of one factor depends on the levels of other factors. Therefore, optimizing each factor independently using a one-factor-at-a-time (OFAT) strategy may fail to identify the best joint operating conditions. Simultaneous multivariable optimization is more appropriate.
+```{r, echo=FALSE, include=FALSE}
+# Load the package required for Bayesian optimization
+library(rBayesianOptimization)
+
+# Define the objective function using the refitted RSM model
+objective_function <- function(synthesis_time, removal_time, amount_of_nanomaterial, 
+                               temperature, pH) {
+  # Create a data frame with the predictor columns required by the model
+  new_data <- data.frame(
+    synthesis_time = synthesis_time,
+    removal_time = removal_time,
+    amount_of_nanomaterial = amount_of_nanomaterial,
+    temperature = temperature,
+    pH = pH
+  )
+  
+  # Predict the response using the refitted RSM model
+  prediction <- predict(rsm_model_final, newdata = new_data)
+  
+  # Return the objective value in the format required by BayesianOptimization
+  return(list(Score = as.numeric(prediction), Pred = 0))
+}
+
+# Define the search bounds for each factor
+bounds <- list(
+  synthesis_time = c(10, 90),
+  removal_time = c(1, 30),
+  amount_of_nanomaterial = c(10, 60),
+  temperature = c(20, 60),
+  pH = c(1, 8)
+)
+
+# Run Bayesian optimization
+set.seed(130)
+bayes_opt_result <- BayesianOptimization(
+  FUN = objective_function,         # Objective function based on the refitted model
+  bounds = bounds,                  # Search bounds
+  init_points = 10,                 # Number of initial sampling points
+  n_iter = 30,                      # Number of optimization iterations
+  acq = "ucb",                      # Acquisition function
+  kappa = 2.576,                    # Acquisition-function parameter
+  eps = 0.0,                        # Parameter controlling the exploration–exploitation trade-off
+  kernel = list(type = "matern", nu = 2.5),
+  nug_thres = 10,
+  verbose = TRUE                    # Print optimization progress
+)
+
+```
+
+
+
+```{r}
+# Rank the evaluated solutions by objective value
+top_n_solutions <- bayes_opt_result$History[order(-bayes_opt_result$History$Value), ]  # Sort in descending order of the objective value
+
+# Select the three highest-scoring evaluated solutions
+best_solutions <- top_n_solutions[1:3, ]  # Retain the top three solutions
+
+# Print the results
+cat("Top Candidate Parameter Configurations:\n")
+print(best_solutions)
+```
+
+### Checking the optimization results
+```{r, echo=FALSE}
+# Extract the best factor settings returned by Bayesian optimization
+best_conditions <- bayes_opt_result$Best_Par
+
+# Convert the factor settings to a data frame for prediction
+best_conditions_df <- as.data.frame(t(best_conditions))
+
+# Predict removal efficiency at the selected factor settings
+predicted_efficiency <- predict(rsm_model_final, newdata = best_conditions_df)
+
+# Print the selected factor settings and predicted removal efficiency
+cat("Best Candidate Settings within the Specified Bounds:\n")
+print(best_conditions)
+cat("\nPredicted removal efficiency at the best candidate settings:\n")
+print(predicted_efficiency)
+
+
+```
